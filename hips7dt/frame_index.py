@@ -263,6 +263,7 @@ def demo() -> int:
             "zp/seeing via candidate keys": all(r["zp_key"] == "ZP_AUTO" and
                                                 r["seeing_key"] == "SEEING" for r in rows),
             "tile file: comments ignored": read_list(str(_tile_file(tmp))) == ["T02252", "T02385"],
+            "relative paths go under WORK": __import__("paths").selftest(),
             "wcs centre": all(r["has_wcs"] == 1 and abs(r["dec_cen"] + 30) < 0.1
                               for r in rows),
         }
@@ -292,6 +293,9 @@ def main() -> int:
         return 0
     if not a.glob:
         ap.error("--glob is required")
+    sys.path.insert(0, str(Path(__file__).parent))
+    from paths import resolve
+    a.out = resolve(a.out)
 
     tiles = read_list(a.tiles)
     files = find_files(a.glob, tiles)

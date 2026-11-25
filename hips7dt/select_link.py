@@ -299,6 +299,9 @@ def main() -> int:
         return demo()
     if not a.index:
         ap.error("--index is required")
+    sys.path.insert(0, str(Path(__file__).parent))
+    from paths import resolve
+    a.index, a.out = resolve(a.index), resolve(a.out)
     a.bands = [b for b in a.bands.replace(",", " ").split() if b]
     sys.path.insert(0, str(Path(__file__).parent))
     from frame_index import read_list

@@ -246,6 +246,8 @@ def main() -> int:
         return demo()
     if not a.tiles:
         ap.error("--tiles is required")
+    from paths import resolve
+    a.out, a.raw_json = resolve(a.out), resolve(a.raw_json)
     key = os.getenv("GWPORTAL_API_KEY")
     if not (a.base_url and key):
         ap.error("set GWPORTAL_BASE_URL (or --base-url) and GWPORTAL_API_KEY")

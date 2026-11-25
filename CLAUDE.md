@@ -26,6 +26,12 @@ Decisions (maintainer, 2026-11-25):
   them (~600 per tile-band exist): output size does not depend on N, but
   Hipsgen time does, and DP0 should not be ~3 mag deeper than DP1/DP2.
   N = 10 vs 30 is compared on m650 first.
+- **All data products live under `/data8/skyteam/7DT`** on skynet
+  (maintainer, 2026-11-25): `index/`, `hips_in/`, `hips/`, `logs/`,
+  `hipsgen_cache/`. `hips7dt/paths.py`: relative paths given to any script
+  (and IN/OUT of `run_hipsgen.sh`) resolve under `$HIPS7DT_WORK` (default
+  `/data8/skyteam/7DT`), absolute paths are used as is. The git checkout
+  (`~/projects/7dt-hips`) holds code only.
 - Runs on **skynet**: `/lyman/data1`, `/lyman/data2` are mounted there;
   `/balmer` is NOT. Frames that live only on balmer are invisible from
   skynet - check per tile x band counts in the index.
