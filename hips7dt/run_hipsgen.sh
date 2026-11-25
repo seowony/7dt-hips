@@ -5,8 +5,7 @@
 #   $OUT/m400/{properties,Moc.fits,Norder*/...}, $OUT/m425/..., ...
 #
 # Bands run one after another; Hipsgen itself uses $THREADS threads.
-# A band is skipped when $OUT/<band>/properties AND Norder3/Allsky.fits exist
-# (resume). Wall time, Hipsgen exit code and completeness per band go to
+# A band is skipped when its properties file holds hips_check_code (resume). Wall time, Hipsgen exit code and completeness per band go to
 # $OUT/timing.tsv; a non-zero exit code does not stop the other bands.
 #
 # Parameter names checked against `Hipsgen.jar -h` (Aladin v12.903):
@@ -43,11 +42,17 @@ opts=(order="$ORDER" tileWidth=512 bitpix=-32 maxThread="$THREADS" cache="$WORK/
 # shellcheck disable=SC2206
 [ -n "$EXTRA" ] && opts+=($EXTRA)
 
+# A band is complete when Hipsgen's last default action (CHECKCODE) has
+# written its check codes into the properties file. (Norder3/Allsky.fits is
+# NOT a usable marker: Hipsgen does not write it for small sky areas, so a
+# finished band was being rebuilt on restart.)
+band_done() { [ -f "$1/properties" ] && grep -q "^hips_check_code" "$1/properties"; }
+
 mkdir -p "$OUT" "$LOGS"
 echo "IN=$IN  OUT=$OUT  LOGS=$LOGS"
 for band in $BANDS; do
   [ -d "$IN/$band" ] || { echo "skip $band: no $IN/$band"; continue; }
-  if [ -f "$OUT/$band/properties" ] && [ -f "$OUT/$band/Norder3/Allsky.fits" ]; then
+  if band_done "$OUT/$band"; then
     echo "done already: $band"; continue
   fi
   n=$(find -L "$IN/$band" -name '*.fits' | wc -l)
@@ -63,7 +68,7 @@ for band in $BANDS; do
   rc=${PIPESTATUS[0]}
   set -e
   done_ok=no
-  [ -f "$OUT/$band/properties" ] && [ -f "$OUT/$band/Norder3/Allsky.fits" ] && done_ok=yes
+  band_done "$OUT/$band" && done_ok=yes
   printf '%s\t%s\t%d\trc=%s\tcomplete=%s\t%s\n' "$band" "$n" "$(( $(date +%s) - t0 ))" \
       "$rc" "$done_ok" "${opts[*]}" >> "$OUT/timing.tsv"
   echo "=== $band finished: rc=$rc complete=$done_ok"
