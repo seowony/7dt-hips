@@ -237,10 +237,9 @@ def main() -> int:
     if not a.index:
         ap.error("--index is required")
     a.bands = [b for b in a.bands.replace(",", " ").split() if b]
-    if a.tiles and os.path.exists(a.tiles):
-        a.tiles = Path(a.tiles).read_text().split()
-    else:
-        a.tiles = [t for t in a.tiles.split(",") if t]
+    sys.path.insert(0, str(Path(__file__).parent))
+    from frame_index import read_list
+    a.tiles = read_list(a.tiles) or []
     a.exclude_images = [p for p in a.exclude_images.split(",") if p]
     return run(a)
 

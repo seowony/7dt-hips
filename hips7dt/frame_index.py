@@ -161,12 +161,20 @@ def find_files(patterns: list[str], tiles: list[str] | None) -> list[str]:
 
 
 def read_list(path_or_csv: str | None) -> list[str] | None:
+    """Tile names from a file or a comma list. '#' starts a comment (to the
+    end of the line); every remaining word must look like T<5 digits>."""
     if not path_or_csv:
         return None
     if os.path.exists(path_or_csv):
-        text = Path(path_or_csv).read_text().replace(",", " ")
-        return [w for w in text.split() if not w.startswith("#")]
-    return [w for w in path_or_csv.replace(",", " ").split() if w]
+        text = "\n".join(line.split("#", 1)[0]
+                         for line in Path(path_or_csv).read_text().splitlines())
+    else:
+        text = path_or_csv
+    words = [w for w in text.replace(",", " ").split() if w]
+    bad = [w for w in words if not re.fullmatch(r"T\d{5}", w)]
+    if bad:
+        raise SystemExit(f"not tile names: {bad[:5]} (from {path_or_csv})")
+    return list(dict.fromkeys(words))
 
 
 def write_csv(rows, out: Path):
@@ -231,6 +239,13 @@ def make_demo_frames(root: Path, tiles, bands, nights, units, seed=1):
     return paths
 
 
+def _tile_file(tmp) -> Path:
+    p = Path(tmp) / "tiles.txt"
+    p.write_text("# header, mentions T00138 T00139 that must NOT be read\n"
+                 "T02252   # inline comment T09999\nT02385\n\n")
+    return p
+
+
 def demo() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "lyman"
@@ -247,6 +262,7 @@ def demo() -> int:
                                          r["unit"].startswith("7DT") for r in rows),
             "zp/seeing via candidate keys": all(r["zp_key"] == "ZP_AUTO" and
                                                 r["seeing_key"] == "SEEING" for r in rows),
+            "tile file: comments ignored": read_list(str(_tile_file(tmp))) == ["T02252", "T02385"],
             "wcs centre": all(r["has_wcs"] == 1 and abs(r["dec_cen"] + 30) < 0.1
                               for r in rows),
         }
