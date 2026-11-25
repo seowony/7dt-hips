@@ -49,15 +49,16 @@ python3 hips7dt/frame_query.py --tiles config/dp0_tiles.txt \
 #    prints frames per tile x band and how many sit on /balmer (not on skynet)
 
 # 2) selection: best N frames by seeing per tile x band, ZP outliers dropped.
-#    Hipsgen cannot rescale single files, so write float32 copies brought to a
-#    common ZP (25) with each frame's SKYVAL subtracted (~245 MB per frame).
-python3 hips7dt/select_link.py --index index/dp0_frames.csv --out hips_in/dp0_n10_zp \
+#    The frames are used AS THEY ARE, through symlinks (no copies, no
+#    rescaling) - the same way CDS built its test HiPS.
+python3 hips7dt/select_link.py --index index/dp0_frames.csv --out hips_in/dp0_n10 \
     --tiles config/dp0_tiles.txt --exclude-dates 2025-09-04 --per-tile-band 10 \
-    --require-zp --scaled-copy 25 --sky-sub --workers 8
+    --require-zp
 
-# 3) Hipsgen. Test on a small region first (EXTRA="region=<moc.fits>"),
-#    then all bands; THREADS up to what the machine allows
-THREADS=16 IN=hips_in/dp0_n10_zp OUT=hips/dp0_n10_zp bash hips7dt/run_hipsgen.sh
+# 3) Hipsgen. Quick look first: all 20 bands on a small region MOC
+#    (EXTRA="region=<moc.fits>", a few minutes per band), colour it, inspect;
+#    then the full DP0 area (~1 h per band at THREADS=16)
+THREADS=16 IN=hips_in/dp0_n10 OUT=hips/dp0_n10 bash hips7dt/run_hipsgen.sh
 
 # 4) colour composite
 python3 hips7dt/make_color_hips.py --in-root hips/dp0_n10 --out hips/dp0_n10/color --workers 4
@@ -92,9 +93,10 @@ Aladin Desktop can open the same URLs (File > Open > URL).
   symlinks (number of files read in the log).
 - **ZP spread**: Hipsgen cannot scale individual files. If a band's
   `zp_range` in `zp_report.csv` exceeds ~0.1 mag (unit-to-unit
-  sensitivity), the mosaic will show seams, so use `--scaled-copy 25
-  --sky-sub` (float32 copies; the disk cost is printed first). Hipsgen's own
-  `expTime=` (with a .hhh header) and `skyVal=auto` did not do this (tested).
+  sensitivity), the mosaic may show seams. Decision (2026-11-25): use the
+  frames as they are, as CDS did; `--scaled-copy 25 --sky-sub` (float32
+  copies) exists only as a later option. Hipsgen's own `expTime=` (with a
+  .hhh header) and `skyVal=auto` cannot do it (tested).
   Also check in the header whether the ZP includes the exposure time.
 - **DP0 has many dates** (140–170 per tile). Do not use all of them;
   cut with `--per-tile-band`. 10 frames × 7 tiles × 20 bands ≈ 1,400 frames.
