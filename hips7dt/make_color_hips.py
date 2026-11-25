@@ -441,7 +441,12 @@ def main() -> int:
     ap.add_argument("--title", default="7DT RIS DP0 colour composite (test)")
     ap.add_argument("--demo", action="store_true")
     a = ap.parse_args()
-    return demo() if a.demo else run(a)
+    if a.demo:
+        return demo()
+    sys.path.insert(0, str(Path(__file__).parent))
+    from paths import resolve
+    a.in_root, a.out = resolve(a.in_root), resolve(a.out)
+    return run(a)
 
 
 if __name__ == "__main__":

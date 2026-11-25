@@ -20,6 +20,14 @@ Every Python step has `--demo`, a self-check that needs no data.
 `make_color_hips.py --demo` also checks that it writes **pixel-identical
 tiles** to Thomas's original script (`docs/thomas/`) from the same input.
 
+## Where the data go
+
+Every data product is written under `$HIPS7DT_WORK` (default
+`/data8/skyteam/7DT`): `index/`, `hips_in/` (symlink trees), `hips/` (HiPS),
+`logs/`, `hipsgen_cache/`. Relative paths given to the scripts are taken
+under it; absolute paths are used as is. Run the scripts from the git
+checkout, which holds code only.
+
 ## Setup on skynet (once)
 
 ```bash
