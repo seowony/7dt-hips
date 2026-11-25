@@ -100,8 +100,18 @@ keep that check passing unless the recipe is changed on purpose.
       grey background, 20 -> dark with visible noise, 50 -> black). The
       rest of Thomas's recipe is unchanged; `--norm thomas` (default)
       still reproduces his script pixel for pixel.
-- [ ] Sky differences between frames/nights inside a band are not removed
-      by a per-band constant - check for seams in the colour HiPS.
+- [x] Sky per frame: Hipsgen `skyVal=SKYVAL` (keyword mode) subtracts each
+      frame's own header SKYVAL while coadding, files untouched. Test
+      (m650, T02524 region, 2026-11-25): tile sky 58 -> 1.4 ADU, star excess
+      identical (49.9/43.5/12.8). Now the default in run_hipsgen.sh
+      (`SKY=` empty disables). (`skyVal=auto` earlier misbehaved, but that
+      run also had expTime=.) ZP differences (~0.1-0.2 mag) remain.
+- [x] Colour with `--norm sky`: K=20 (default) dark background with clear
+      star colours; K=10 grey/noisy (maintainer saw both, 2026-11-25).
+- [ ] Satellite trails survive the mean coadd at 1/N. Hipsgen has no median
+      overlay (modes: overlayMean, overlayMeanMax, overlayAdd, overlayNone,
+      overlayFading; treeMedian is only for the hierarchy). Option: find
+      the frame via HpxFinder and drop it with --exclude-images.
 - Viewing: `hips7dt/make_viewer.py` -> `hips/index.html`, two synced
   Aladin Lite panels; serve with `python3 -m http.server` on skynet + ssh
   tunnel. gwportal will link the final HiPS later.
