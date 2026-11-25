@@ -30,6 +30,7 @@ import re
 import sys
 import tempfile
 import traceback
+import warnings
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -128,7 +129,34 @@ def make_rgb_basis(wl):
     return basis
 
 
-def configure(in_root: Path, out: Path, overwrite: bool, only=None):
+def measure_sky(band: dict, n_tiles: int = 40) -> tuple[float, float]:
+    """(sky, sigma) of a band: median of per-tile medians and of per-tile
+    1.4826*MAD, over up to n_tiles tiles of its deepest order (evenly spread
+    over the sorted tile list)."""
+    order = band["properties"].get("hips_order", "").strip()
+    tiles = sorted(band["path"].glob(f"Norder{order}/Dir*/Npix*.fits")) if order else []
+    if not tiles:
+        deep = sorted(band["path"].glob("Norder*"), key=lambda d: int(d.name[6:]))
+        tiles = sorted(deep[-1].glob("Dir*/Npix*.fits")) if deep else []
+    if not tiles:
+        raise ValueError(f"no tiles to measure the sky of {band['id']}")
+    pick = tiles[:: max(1, len(tiles) // n_tiles)][:n_tiles]
+    meds, sigs = [], []
+    for t in pick:
+        d = load_fits_any(t)
+        d = d[np.isfinite(d)]
+        if d.size < 100:
+            continue
+        m = np.median(d)
+        meds.append(m)
+        sigs.append(1.4826 * np.median(np.abs(d - m)))
+    if not meds:
+        raise ValueError(f"no valid pixels to measure the sky of {band['id']}")
+    return float(np.median(meds)), float(np.median(sigs))
+
+
+def configure(in_root: Path, out: Path, overwrite: bool, only=None, norm="thomas",
+              sky_high_sigma: float = 20.0):
     bands = discover_bands(in_root, only)
     wl = np.array([b["wavelength_nm"] for b in bands], dtype=np.float32)
     missing = [b["id"] for b in bands if b["pixel_cut"] is None]
@@ -141,7 +169,13 @@ def configure(in_root: Path, out: Path, overwrite: bool, only=None):
         pedestal=wavelength_ramp(wl, PEDESTAL_RED_RAMP_START_NM, float(wl.max()),
                                  PEDESTAL_FRACTION_AT_MIN_WAVELENGTH,
                                  PEDESTAL_FRACTION_AT_MAX_WAVELENGTH),
-        basis=make_rgb_basis(wl))
+        basis=make_rgb_basis(wl), norm=norm, sky=None, sigma=None, high_sky=None)
+    if norm == "sky":
+        ms = [measure_sky(b) for b in bands]
+        CFG["sky"] = [m[0] for m in ms]
+        CFG["sigma"] = [m[1] for m in ms]
+        CFG["high_sky"] = [sky_high_sigma * m[1] for m in ms]
+        CFG["sky_high_sigma"] = sky_high_sigma
     return CFG
 
 
@@ -171,10 +205,17 @@ def load_fits_any(path: Path) -> np.ndarray:
 # ----------------------------------------------------------------------
 # Colour recipe (unchanged arithmetic)
 # ----------------------------------------------------------------------
-def normalize_band(band, pixel_cut, pedestal_fraction):
+def normalize_band(band, pixel_cut, pedestal_fraction, sky=None, high_sky=None):
     valid = np.isfinite(band)
     band = np.nan_to_num(band.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
     high = pixel_cut[1]
+    if sky is not None:
+        # --norm sky: frames still carry their sky (7DT v2 singles), so the
+        # Hipsgen cut is just sky +- a few noise sigma. Remove the band's sky
+        # and use high = K * sigma (K = --sky-high-sigma) above it; the rest
+        # of Thomas's recipe is unchanged.
+        band = np.where(valid, band - np.float32(sky), 0.0).astype(np.float32)
+        high = high_sky
     pedestal = pedestal_fraction * high
     denom = high - pedestal
     if not np.isfinite(denom) or denom <= 0:
@@ -185,9 +226,11 @@ def normalize_band(band, pixel_cut, pedestal_fraction):
 
 
 def composite(bands):
-    weighted = [w * normalize_band(b, band["pixel_cut"], p)
-                for w, b, band, p in zip(CFG["weights"], bands, CFG["bands"],
-                                         CFG["pedestal"])]
+    skies = CFG.get("sky") or [None] * len(bands)
+    highs = CFG.get("high_sky") or [None] * len(bands)
+    weighted = [w * normalize_band(b, band["pixel_cut"], p, sk, hs)
+                for w, b, band, p, sk, hs in zip(CFG["weights"], bands, CFG["bands"],
+                                                 CFG["pedestal"], skies, highs)]
     rgb_lin = np.stack(weighted, axis=-1) @ CFG["basis"]
     rgb_lin = np.clip(np.nan_to_num(rgb_lin, nan=0.0, posinf=0.0, neginf=0.0), 0.0, None)
     rw, gw, bw = LUMA
@@ -295,7 +338,11 @@ def write_metadata(moc, start, end, creator_did, title):
         "hips_status          = private master clonableOnce",
         "hips_tile_format     = png",
         "dataproduct_type     = image",
-        f"color_per_band_norm  = {PER_BAND_NORM}",
+        f"color_per_band_norm  = {PER_BAND_NORM}"
+        + ("" if not CFG.get("sky") else
+           f" with --norm sky (high = {CFG['sky_high_sigma']:g} sigma); sky "
+           + " ".join(f"{x:.4g}" for x in CFG["sky"])
+           + "; sigma " + " ".join(f"{x:.3g}" for x in CFG["sigma"])),
         f"color_i_mode         = {I_MODE}",
         f"color_q              = {Q}",
         f"color_i0             = {I0_MODE}",
@@ -317,11 +364,16 @@ def write_metadata(moc, start, end, creator_did, title):
 
 def run(a) -> int:
     configure(Path(a.in_root), Path(a.out), a.overwrite,
-              [b for b in a.bands.split(",") if b] or None)
-    for b, w, rgb, p in zip(CFG["bands"], CFG["weights"], CFG["basis"], CFG["pedestal"]):
+              [b for b in a.bands.split(",") if b] or None, getattr(a, "norm", "thomas"),
+              getattr(a, "sky_high_sigma", 20.0))
+    skies = CFG["sky"] or [None] * len(CFG["bands"])
+    sigs = CFG["sigma"] or [None] * len(CFG["bands"])
+    for b, w, rgb, p, sk, sg in zip(CFG["bands"], CFG["weights"], CFG["basis"],
+                                    CFG["pedestal"], skies, sigs):
         lo, hi = b["pixel_cut"]
+        sky_txt = "" if sk is None else f" sky={sk:.4g} sigma={sg:.3g}"
         print(f'  {b["id"]:>4} {b["wavelength_nm"]:>4} nm weight={w:g} pedestal={p:g} '
-              f'cut={lo:g}..{hi:g} rgb=({rgb[0]:.3f},{rgb[1]:.3f},{rgb[2]:.3f})')
+              f'cut={lo:g}..{hi:g}{sky_txt} rgb=({rgb[0]:.3f},{rgb[1]:.3f},{rgb[2]:.3f})')
     moc = build_union_moc()
     start, end = a.order_min, a.order_max
     if end is None:
@@ -332,7 +384,10 @@ def run(a) -> int:
     has_allsky = any((b["path"] / "Norder3/Allsky.fits").exists() for b in CFG["bands"])
     n_fail = 0
     for order in range(start, end + 1):
-        params = [(order, int(i)) for i in moc.degrade_to_order(order).flatten()]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            cells = moc.degrade_to_order(order).flatten()
+        params = [(order, int(i)) for i in cells]
         if order == 3 and has_allsky:
             params.append((None, None))
         with Pool(a.workers) as pool:
@@ -352,21 +407,22 @@ def run(a) -> int:
 # ----------------------------------------------------------------------
 # Demo: fake 20-band HiPS, regression against Thomas's original script
 # ----------------------------------------------------------------------
-def make_fake_hips(root: Path, order=3, cells=(100, 101), missing=("m875", 101), seed=3):
+def make_fake_hips(root: Path, order=3, cells=(100, 101), missing=("m875", 101), seed=3,
+                   sky=3.0, cut=None):
     rng = np.random.default_rng(seed)
     w = 64
     yy, xx = np.mgrid[:TILE_WIDTH, :TILE_WIDTH]
     for k, nm in enumerate(range(400, 900, 25)):
         d = root / f"m{nm}"
         d.mkdir(parents=True)
-        hi = 50.0 + 5 * k
-        (d / "properties").write_text(f"hips_pixel_cut = -1 {hi}\nhips_order = {order}\n")
+        lo, hi = cut if cut else (-1, 50.0 + 5 * k)
+        (d / "properties").write_text(f"hips_pixel_cut = {lo} {hi}\nhips_order = {order}\n")
         MOC.from_healpix_cells(np.array(cells), np.full(len(cells), order),
                                max_depth=order).save(str(d / "Moc.fits"), format="fits")
         for ip in cells:
             if (f"m{nm}", ip) == missing:
                 continue
-            img = rng.normal(3.0, 1.0, (TILE_WIDTH, TILE_WIDTH)).astype(np.float32)
+            img = rng.normal(sky, 1.0, (TILE_WIDTH, TILE_WIDTH)).astype(np.float32)
             img += 400.0 * np.exp(-((xx - 150) ** 2 + (yy - 300) ** 2) / 30.0) * (nm / 600)
             img += 300.0 * np.exp(-((xx - 400) ** 2 + (yy - 100) ** 2) / 30.0) * (600 / nm) ** 3
             img[:5, :5] = np.nan
@@ -421,6 +477,23 @@ def demo() -> int:
         run(a)
         checks["resume skips existing tiles"] = (
             tmp / "mine" / tile_suffix(3, 100).replace(".fits", ".png")).stat().st_mtime_ns == before
+        # 7DT-like input: sky 110 ADU left in, Hipsgen cut = sky +- noise
+        make_fake_hips(tmp / "skyhips", sky=110.0, cut=(106.0, 114.0))  # noise sigma 1
+        res = {}
+        for norm in ("thomas", "sky"):
+            CFG.clear()
+            b = argparse.Namespace(**{**vars(a), "in_root": str(tmp / "skyhips"),
+                                      "out": str(tmp / f"sky_{norm}"), "norm": norm,
+                                      "sky_high_sigma": 20.0})
+            run(b)
+            res[norm] = np.asarray(Image.open(
+                tmp / f"sky_{norm}" / tile_suffix(3, 100).replace(".fits", ".png"))).astype(float)
+        bg = lambda im: float(np.median(im[200:260, 20:80]))  # empty sky patch
+        checks["sky left in: thomas recipe saturates the background"] = bg(res["thomas"]) > 150
+        checks["sky and sigma measured from the tiles"] = (
+            abs(CFG["sky"][0] - 110) < 0.2 and abs(CFG["sigma"][0] - 1) < 0.1)
+        checks["--norm sky: dark background, bright stars"] = (
+            bg(res["sky"]) < 40 and res["sky"][TILE_WIDTH - 1 - 300, 150].max() > 200)  # PNG is flipped
     for k, v in checks.items():
         print(f"  [{'PASS' if v else 'FAIL'}] {k}")
     return 0 if all(checks.values()) else 1
@@ -437,6 +510,13 @@ def main() -> int:
                     help="default: max hips_order of the inputs")
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--norm", choices=("thomas", "sky"), default="thomas",
+                    help="thomas = his recipe as is (frames with sky ~0); sky = "
+                         "subtract each band's median sky first (7DT v2 singles "
+                         "keep their sky)")
+    ap.add_argument("--sky-high-sigma", type=float, default=20.0,
+                    help="--norm sky: Thomas's 'high' = this many noise sigma above "
+                         "the sky (smaller = brighter, noisier background)")
     ap.add_argument("--creator-did", default="ivo://SNU/P/7DT/RIS-DP0/color")
     ap.add_argument("--title", default="7DT RIS DP0 colour composite (test)")
     ap.add_argument("--demo", action="store_true")
