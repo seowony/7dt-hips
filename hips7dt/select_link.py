@@ -78,6 +78,14 @@ def select(df: pd.DataFrame, a) -> pd.DataFrame:
         drop(df["zp"].isna(), "no_zp")
     if a.max_seeing:
         drop(df["seeing"].notna() & (df["seeing"] > a.max_seeing), "seeing")
+    if a.zp_clip > 0:
+        # Frames whose ZP is far from the band's median: clouds (ZP low) or a
+        # failed calibration (e.g. m625 ZP 29.9 vs median 26.2). Median over
+        # all still-eligible frames of the band, all tiles and units.
+        cand = df["reason"] == ""
+        med = df[cand].groupby("band")["zp"].median()
+        off = (df["zp"] - df["band"].map(med)).abs()
+        drop(cand & off.notna() & (off > a.zp_clip), "zp_outlier")
 
     ok = df[df["reason"] == ""].copy()
     ok["_s"] = ok["seeing"].fillna(99.0)
@@ -108,7 +116,39 @@ def zp_report(sel: pd.DataFrame) -> pd.DataFrame:
     return rep.reset_index()
 
 
-def build_tree(sel: pd.DataFrame, out: Path, scaled_zp: float | None, dry: bool):
+def zp_by_unit(sel: pd.DataFrame) -> pd.DataFrame:
+    g = sel.groupby(["band", "unit"])["zp"]
+    out = pd.DataFrame({"n": g.size(), "zp_median": g.median(), "zp_std": g.std()})
+    out["offset_vs_band"] = out["zp_median"] - sel.groupby("band")["zp"].median().reindex(
+        out.index.get_level_values("band")).to_numpy()
+    return out.reset_index()
+
+
+HHH_KEY = "HIPSSCAL"
+
+
+def write_hhh(src: str, dst_link: Path, zp: float, zpref: float):
+    """Aladin/Hipsgen external header: <name>.hhh beside the image replaces
+    its header. Copy the frame's own header and add HIPSSCAL =
+    10**(0.4*(zp - zpref)); Hipsgen run with expTime=HIPSSCAL divides the
+    pixels by it, i.e. brings every frame to ZP = zpref without copying
+    pixels. (Hipsgen behaviour to be confirmed with `-man expTime`.)"""
+    hdr = None
+    with fits.open(src, memmap=True, lazy_load_hdus=True) as hdul:
+        for h in hdul:
+            if h.header.get("NAXIS", 0) >= 2:
+                hdr = h.header.copy()
+                break
+    if hdr is None:
+        raise ValueError(f"no image HDU in {src}")
+    hdr[HHH_KEY] = (10 ** (0.4 * (zp - zpref)), f"flux scale to ZP {zpref} (7dt-hips)")
+    path = dst_link.with_name(dst_link.name.rsplit(".fits", 1)[0] + ".hhh")
+    path.write_text(hdr.tostring(sep="\n", endcard=True, padding=False) + "\n")
+    return path
+
+
+def build_tree(sel: pd.DataFrame, out: Path, scaled_zp: float | None, dry: bool,
+               hhh_zp: float | None = None):
     n_new = 0
     for r in sel.itertuples():
         dst = out / r.band / link_name(r)
@@ -119,6 +159,8 @@ def build_tree(sel: pd.DataFrame, out: Path, scaled_zp: float | None, dry: bool)
             continue
         if scaled_zp is None:
             os.symlink(os.path.abspath(r.path), dst)
+            if hhh_zp is not None:
+                write_hhh(r.path, dst, float(r.zp), hhh_zp)
         else:
             with fits.open(r.path, memmap=True) as hdul:
                 hdu = next(h for h in hdul if h.data is not None and h.data.ndim == 2)
@@ -143,6 +185,7 @@ def run(a) -> int:
     df.to_csv(out / "manifest.csv", index=False)
     rep = zp_report(sel)
     rep.to_csv(out / "zp_report.csv", index=False)
+    zp_by_unit(sel).to_csv(out / "zp_by_unit.csv", index=False)
 
     print("dropped:", df.loc[df["selected"] == 0, "reason"].value_counts().to_dict())
     print(f"selected {len(sel)} frames, "
@@ -158,7 +201,7 @@ def run(a) -> int:
         npix = (sel["naxis1"].fillna(9576) * sel["naxis2"].fillna(6388))  # v2 single size
         gb = npix.sum() * 4 / 1e9
         print(f"--scaled-copy writes ~{gb:.1f} GB")
-    n = build_tree(sel, out, a.scaled_copy, a.dry_run)
+    n = build_tree(sel, out, a.scaled_copy, a.dry_run, a.hhh_scale)
     print(("dry run: nothing written to the tree" if a.dry_run
            else f"{n} new entries under {out}/<band>/"))
     return 0
@@ -184,7 +227,7 @@ def demo() -> int:
             index=str(idx), out=str(out), bands=MEDIUM_BANDS, tiles=None,
             exclude_dates="", exclude_images=[str(bad)], require_zp=True,
             max_seeing=0, per_tile_band=3, zp_warn=0.1, scaled_copy=None,
-            dry_run=False)
+            dry_run=False, zp_clip=0.3, hhh_scale=None)
         run(a)
         man = pd.read_csv(out / "manifest.csv", dtype=str)
         links = sorted((out).glob("*/*.fits"))
@@ -202,6 +245,22 @@ def demo() -> int:
                 man[man["selected"] == "1"].assign(
                     zp=lambda d: d["zp"].astype(float)), out, None, False) == 0,
         }
+        # ZP outlier: give one frame a ZP 2 mag off -> dropped
+        idx_df = pd.read_csv(idx)
+        idx_df.loc[0, "zp"] = idx_df["zp"].median() + 2.0
+        idx2 = Path(tmp) / "idx2.csv"
+        idx_df.to_csv(idx2, index=False)
+        a2 = argparse.Namespace(**{**vars(a), "index": str(idx2), "out": str(Path(tmp) / "t2"),
+                                   "hhh_scale": 25.0})
+        run(a2)
+        m2 = pd.read_csv(Path(tmp) / "t2/manifest.csv", dtype=str)
+        checks["ZP outlier dropped"] = (m2["reason"] == "zp_outlier").sum() == 1
+        hhh = sorted((Path(tmp) / "t2").glob("*/*.hhh"))
+        h0 = fits.Header.fromstring(hhh[0].read_text(), sep="\n") if hhh else None
+        sel2 = m2[m2["selected"] == "1"]
+        checks[".hhh beside every link, with WCS + HIPSSCAL"] = (
+            len(hhh) == len(sel2) and h0 is not None and "CTYPE1" in h0
+            and abs(h0["HIPSSCAL"] - 10 ** (0.4 * (h0["ZP_AUTO"] - 25.0))) < 1e-9)
         sc = Path(tmp) / "scaled"
         sel = man[man["selected"] == "1"].head(1).assign(zp=lambda d: d["zp"].astype(float))
         build_tree(sel, sc, 25.0, False)
@@ -228,7 +287,11 @@ def main() -> int:
     ap.add_argument("--max-seeing", type=float, default=0.0, help="arcsec, 0 = off")
     ap.add_argument("--per-tile-band", type=int, default=10)
     ap.add_argument("--zp-warn", type=float, default=0.1)
+    ap.add_argument("--zp-clip", type=float, default=0.3,
+                    help="drop frames with |zp - band median| > this [mag]; 0 = off")
     ap.add_argument("--scaled-copy", type=float, metavar="ZPREF")
+    ap.add_argument("--hhh-scale", type=float, metavar="ZPREF",
+                    help="symlink + <name>.hhh header with HIPSSCAL for Hipsgen expTime=")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--demo", action="store_true")
     a = ap.parse_args()
