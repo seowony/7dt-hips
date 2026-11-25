@@ -6,7 +6,8 @@
 #
 # Bands run one after another; Hipsgen itself uses $THREADS threads.
 # A band is skipped when $OUT/<band>/properties AND Norder3/Allsky.fits exist
-# (resume). Wall time per band is written to $OUT/timing.tsv.
+# (resume). Wall time, Hipsgen exit code and completeness per band go to
+# $OUT/timing.tsv; a non-zero exit code does not stop the other bands.
 #
 # Parameter names checked against `Hipsgen.jar -h` (Aladin v12.903):
 #   in= out= id= order= tileWidth= bitpix= maxThread= skyVal= expTime= mode=
@@ -52,9 +53,18 @@ for band in $BANDS; do
   n=$(find -L "$IN/$band" -name '*.fits' | wc -l)
   echo "=== $band: $n frames  ${opts[*]}  $(date)"
   t0=$(date +%s)
+  # Hipsgen can exit non-zero after a complete run (e.g. warnings); with
+  # `set -e -o pipefail` that used to stop the whole loop after the first
+  # band. Record the exit code instead and judge completion by the files.
+  set +e
   java -Xmx"$MEM" -jar "$HIPSGEN" \
       in="$IN/$band" out="$OUT/$band" id="$ID_PREFIX/$band" "${opts[@]}" \
       2>&1 | tee "$LOGS/hipsgen_$(basename "$OUT")_$band.log"
-  printf '%s\t%s\t%d\t%s\n' "$band" "$n" "$(( $(date +%s) - t0 ))" "${opts[*]}" \
-      >> "$OUT/timing.tsv"
+  rc=${PIPESTATUS[0]}
+  set -e
+  done_ok=no
+  [ -f "$OUT/$band/properties" ] && [ -f "$OUT/$band/Norder3/Allsky.fits" ] && done_ok=yes
+  printf '%s\t%s\t%d\trc=%s\tcomplete=%s\t%s\n' "$band" "$n" "$(( $(date +%s) - t0 ))" \
+      "$rc" "$done_ok" "${opts[*]}" >> "$OUT/timing.tsv"
+  echo "=== $band finished: rc=$rc complete=$done_ok"
 done
