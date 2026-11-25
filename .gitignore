@@ -1,0 +1,6 @@
+index/
+hips_in/
+hips/
+logs/
+*.log
+__pycache__/

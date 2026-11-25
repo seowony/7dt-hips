@@ -1,0 +1,10 @@
+# RIS DP0 = the 7 IMS tiles held in the DB (ris_dp0.object_uid_map).
+# The DP0 directory on disk has 7 more (T00138 T00139 T00174 T00175
+# T00176 T00215 T00216) that were never ingested - not used here.
+T02252
+T02385
+T02386
+T02523
+T02524
+T02665
+T02666
