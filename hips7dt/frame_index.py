@@ -49,7 +49,7 @@ KEYS = {
     "exptime": ["EXPTIME", "EXPOSURE"],
     "zp": ["ZP_AUTO", "ZP", "ZP5_1", "ZP_5", "PHOTZP", "MAGZERO", "MAGZP"],
     "seeing": ["SEEING", "FWHM_ARC", "FWHM", "PEEING"],
-    "depth": ["UL5_AUTO", "UL5_5", "UL5_1", "DEPTH", "LIMMAG"],
+    "depth": ["UL5_1", "UL5_0", "UL5_AUTO", "DEPTH", "LIMMAG"],  # v2 UL5_AUTO is 0.0
     "sky": ["SKYVAL", "SKY", "BACKGND"],
     "skysig": ["SKYSIG", "BKGRMS", "SKYRMS"],
 }
@@ -118,6 +118,8 @@ def index_one(path: str) -> dict:
         for kind in ("zp", "seeing", "depth", "sky", "skysig"):
             val, key = first(hdr, kind)
             row[kind] = as_float(val)
+            if kind in ("zp", "depth", "seeing") and row[kind] is not None and row[kind] <= 0:
+                row[kind] = None  # 0.0 = not measured
             if f"{kind}_key" in row:
                 row[f"{kind}_key"] = key
 
@@ -154,7 +156,8 @@ def find_files(patterns: list[str], tiles: list[str] | None) -> list[str]:
         for p in expanded:
             files.update(glob.glob(p, recursive=True))
     return sorted(f for f in files
-                  if "/coadd/" not in f and f.endswith((".fits", ".fits.fz", ".fit")))
+                  if "/coadd/" not in f and not f.endswith("_weight.fits")
+                  and f.endswith((".fits", ".fits.fz", ".fit")))
 
 
 def read_list(path_or_csv: str | None) -> list[str] | None:

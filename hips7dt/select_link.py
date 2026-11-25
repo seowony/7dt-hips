@@ -155,7 +155,8 @@ def run(a) -> int:
               "frames will be averaged with different scales (seams); "
               "consider --scaled-copy.")
     if a.scaled_copy is not None:
-        gb = (sel["naxis1"] * sel["naxis2"]).sum() * 4 / 1e9
+        npix = (sel["naxis1"].fillna(9576) * sel["naxis2"].fillna(6388))  # v2 single size
+        gb = npix.sum() * 4 / 1e9
         print(f"--scaled-copy writes ~{gb:.1f} GB")
     n = build_tree(sel, out, a.scaled_copy, a.dry_run)
     print(("dry run: nothing written to the tree" if a.dry_run

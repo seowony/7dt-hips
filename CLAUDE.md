@@ -34,8 +34,13 @@ keep that check passing unless the recipe is changed on purpose.
 
 ## Pipeline
 
-1. `hips7dt/frame_index.py` - header-only index of v2 frames (candidate
-   keyword lists for ZP / seeing / depth / sky; `--dump-header`).
+1. `hips7dt/frame_query.py` - frame index from the **gwportal DB** via
+   `GET /api/frames/processed/?version=v2&data_stream=survey&tile_name=...`
+   (maintainer, 2026-11-25: frame paths are taken from the DB that gwportal
+   serves, not from a disk scan). Same CSV schema as `frame_index.py` (the
+   header-scan fallback). Frames not under `/lyman` are flagged
+   `not_mounted`. Mapping source: gwportal `api/views.py::_serialize_processed`
+   and `survey/models.py::ProcessedScienceFrame` (zp = ZP_AUTO, ul5 = UL5_AUTO).
 2. `hips7dt/select_link.py` - per tile x band best-N selection, exclusions,
    symlink tree, `manifest.csv`, `zp_report.csv`; `--scaled-copy ZPREF`
    when ZPs differ (Hipsgen cannot scale individual files).
@@ -44,8 +49,12 @@ keep that check passing unless the recipe is changed on purpose.
 
 ## Open items
 
-- [ ] v2 frame path pattern and header keywords (ZP, seeing, depth, sky,
-      background-subtracted or not) - from `--dump-header` on skynet.
+- [x] v2 frame path pattern and header keywords - from gwportal
+      (`ingest_processed_frames_v2.py`, `FITS_HEADERS/v2_processedsingle.head`).
+- [ ] Is the v2 single background-subtracted? (SKYVAL ~17 ADU suggests yes.)
+- [ ] Does Hipsgen read the TPV WCS of v2 singles correctly?
+- [ ] gwportal's API does not return `is_production` / `sanity_flag`; add them
+      to its serializer if QA flags are needed for selection.
 - [ ] Hipsgen parameter names not yet checked against `Hipsgen.jar -h`
       (`in= out= id= order= bitpix= maxThread= skyval=auto`), and whether it
       follows file symlinks.
