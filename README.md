@@ -10,7 +10,8 @@ mounted there, `/balmer` is not).
 
 | step | script | input → output |
 |---|---|---|
-| 1 | `hips7dt/frame_index.py` | v2 frame headers → `index/dp0_frames.csv` |
+| 1 | `hips7dt/frame_query.py` | gwportal DB (API) → `index/dp0_frames.csv` |
+| 1′ | `hips7dt/frame_index.py` | fallback: disk scan of frame headers → same CSV |
 | 2 | `hips7dt/select_link.py` | index → `hips_in/dp0/<band>/` symlink tree + `manifest.csv`, `zp_report.csv` |
 | 3 | `hips7dt/run_hipsgen.sh` | symlink tree → `hips/dp0/<band>/` FITS HiPS (Hipsgen) |
 | 4 | `hips7dt/make_color_hips.py` | `hips/dp0/m*/` → `hips/dp0/color/` PNG HiPS |
@@ -32,12 +33,12 @@ python3 hips7dt/frame_index.py --demo && python3 hips7dt/select_link.py --demo \
 ## DP0 run
 
 ```bash
-# 0) inspect one v2 frame header -> names of the ZP / seeing / depth keys
-python3 hips7dt/frame_index.py --dump-header <one v2 single frame>
-
-# 1) index ({tile} expands per tile; paths under coadd/ are skipped)
-python3 hips7dt/frame_index.py --glob '<v2 root>/*/{tile}/*/*.fits' \
-    --tiles config/dp0_tiles.txt --out index/dp0_frames.csv --workers 4
+# 1) index from the gwportal DB (v2 survey singles of the DP0 tiles)
+export GWPORTAL_BASE_URL=https://proton.snu.ac.kr:8081
+export GWPORTAL_API_KEY=...            # same key as toolkit/gwportal_client.py
+python3 hips7dt/frame_query.py --tiles config/dp0_tiles.txt \
+    --out index/dp0_frames.csv --check-exists
+#    prints frames per tile x band and how many sit on /balmer (not on skynet)
 
 # 2) selection (best 10 frames by seeing per tile x band) - dry run first
 python3 hips7dt/select_link.py --index index/dp0_frames.csv --out hips_in/dp0 \
@@ -56,6 +57,18 @@ python3 hips7dt/make_color_hips.py --in-root hips/dp0 --out hips/dp0/color --wor
 To inspect: open the `hips/dp0/color` folder in Aladin Desktop, or serve
 `hips/dp0` locally (`python3 -m http.server -d hips/dp0`) and point
 Aladin Lite at it.
+
+## v2 single frames (from gwportal)
+
+- Path: `/lyman/data2/processed/{date}/{tile}/{filter}/singles/
+  {tile}_{filter}_{unit}_{date}_{time}_{exp}s.fits`, with a
+  `*_weight.fits` weight map beside it (skipped). The same layout exists on
+  `/balmer/data1/processed/...`, which skynet cannot read.
+- Header sample: gwportal `FITS_HEADERS/v2_processedsingle.head`. 9576 x 6388
+  px, TPV WCS, `ZP_AUTO` (DB `zp`), `SEEING`, `SKYVAL`/`SKYSIG`, `UL5_0..5`;
+  `UL5_AUTO` is 0.0 and is treated as missing.
+- `SKYVAL` ~17 ADU in a 100-s frame suggests the background is already
+  subtracted - to be confirmed before choosing Hipsgen's `skyval`.
 
 ## Caveats
 
