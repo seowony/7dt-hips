@@ -15,11 +15,13 @@ No pixel data is copied. Selection per (tile, band):
   3. seeing <= --max-seeing (when seeing is known)
   4. best --per-tile-band frames by seeing (then depth); 0 = keep all
 
-ZP: Hipsgen cannot rescale individual files, so frames with different
+ZP: Hipsgen cannot rescale individual files (tested: neither a .hhh
+header with expTime= nor skyVal=auto does it), so frames with different
 zero points are averaged as they are. zp_report.csv shows the spread per
 band; if it is more than ~0.05-0.1 mag, use --scaled-copy ZPREF, which
 writes float32 copies scaled to ZPREF (data * 10**(0.4*(ZPREF - zp)))
 instead of links - costs disk, so check the size it prints first.
+--sky-sub also subtracts each frame's SKYVAL before scaling.
 
     python3 hips7dt/select_link.py --index index/dp0_frames.csv \
         --out hips_in/dp0 --per-tile-band 10 --dry-run
@@ -124,34 +126,52 @@ def zp_by_unit(sel: pd.DataFrame) -> pd.DataFrame:
     return out.reset_index()
 
 
-HHH_KEY = "HIPSSCAL"
+def write_scaled(src: str, dst: Path, zp: float, zpref: float, sky: float | None):
+    """float32 copy of one frame: (data - sky) * 10**(0.4*(zpref - zp)).
+
+    Hipsgen cannot scale individual files: tested on m650 (2026-11-25), a
+    HIPSSCAL card in a <name>.hhh header with expTime=HIPSSCAL left the
+    pixels unchanged (ratio 1.00), and skyVal=auto multiplied everything by
+    ~2.25 instead of removing the sky. So the scaling is done here.
+    sky = the frame's own SKYVAL (header) when --sky-sub, else None.
+    Written to <dst>.part first and renamed, so an interrupted run never
+    leaves a truncated file that a rerun would skip.
+    """
+    with fits.open(src, memmap=True) as hdul:
+        hdu = next(h for h in hdul if h.data is not None and h.data.ndim == 2)
+        hdr = hdu.header.copy()
+        data = hdu.data.astype(np.float32)
+    if sky is not None:
+        data -= np.float32(sky)
+    scale = np.float32(10 ** (0.4 * (zpref - zp)))
+    data *= scale
+    for k in ("BSCALE", "BZERO", "BLANK", "ZP_AUTO"):
+        hdr.pop(k, None)
+    hdr["HIPSZP"] = (zpref, "7dt-hips: pixels scaled to this AB zero point")
+    hdr["HIPSSCL"] = (float(scale), "7dt-hips: flux scale applied")
+    hdr["HIPSSKY"] = (float(sky) if sky is not None else 0.0, "7dt-hips: sky subtracted [ADU]")
+    hdr["HISTORY"] = f"7dt-hips scaled copy of {src}"
+    tmp = dst.with_name(dst.name + ".part")
+    fits.writeto(tmp, data, hdr, overwrite=True)
+    os.replace(tmp, dst)
 
 
-def write_hhh(src: str, dst_link: Path, zp: float, zpref: float):
-    """Aladin/Hipsgen external header: <name>.hhh beside the image replaces
-    its header. Copy the frame's own header and add HIPSSCAL =
-    10**(0.4*(zp - zpref)); Hipsgen run with expTime=HIPSSCAL divides the
-    pixels by it, i.e. brings every frame to ZP = zpref without copying
-    pixels. (Hipsgen behaviour to be confirmed with `-man expTime`.)"""
-    hdr = None
-    with fits.open(src, memmap=True, lazy_load_hdus=True) as hdul:
-        for h in hdul:
-            if h.header.get("NAXIS", 0) >= 2:
-                hdr = h.header.copy()
-                break
-    if hdr is None:
-        raise ValueError(f"no image HDU in {src}")
-    hdr[HHH_KEY] = (10 ** (0.4 * (zp - zpref)), f"flux scale to ZP {zpref} (7dt-hips)")
-    path = dst_link.with_name(dst_link.name.rsplit(".fits", 1)[0] + ".hhh")
-    path.write_text(hdr.tostring(sep="\n", endcard=True, padding=False) + "\n")
-    return path
+def _scaled_job(args):
+    src, dst, zp, zpref, sky = args
+    try:
+        write_scaled(src, Path(dst), zp, zpref, sky)
+        return ""
+    except Exception as exc:  # noqa: BLE001
+        return f"{src}: {exc}"
 
 
 def build_tree(sel: pd.DataFrame, out: Path, scaled_zp: float | None, dry: bool,
-               hhh_zp: float | None = None):
-    n_new = 0
+               sky_sub: bool = False, workers: int = 1):
+    jobs, n_new = [], 0
     for r in sel.itertuples():
         dst = out / r.band / link_name(r)
+        if dst.name.endswith(".fz"):
+            dst = dst.with_name(dst.name[:-3])
         if dry:
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -159,20 +179,28 @@ def build_tree(sel: pd.DataFrame, out: Path, scaled_zp: float | None, dry: bool,
             continue
         if scaled_zp is None:
             os.symlink(os.path.abspath(r.path), dst)
-            if hhh_zp is not None:
-                write_hhh(r.path, dst, float(r.zp), hhh_zp)
+            n_new += 1
         else:
-            with fits.open(r.path, memmap=True) as hdul:
-                hdu = next(h for h in hdul if h.data is not None and h.data.ndim == 2)
-                scale = 10 ** (0.4 * (scaled_zp - r.zp))
-                hdr = hdu.header.copy()
-                for k in ("BSCALE", "BZERO", "BLANK"):
-                    hdr.pop(k, None)
-                hdr["HISTORY"] = f"scaled x{scale:.6f} to ZP {scaled_zp} from {r.path}"
-                fits.writeto(dst.with_suffix(".fits") if str(dst).endswith(".fz") else dst,
-                             (hdu.data.astype(np.float32) * scale), hdr)
-        n_new += 1
+            sky = float(r.sky) if sky_sub and pd.notna(r.sky) else None
+            if sky_sub and sky is None:
+                sky = _header_sky(r.path)
+            jobs.append((r.path, str(dst), float(r.zp), scaled_zp, sky))
+    if jobs:
+        from multiprocessing import Pool
+        with Pool(max(1, workers)) as pool:
+            errs = [e for e in pool.imap_unordered(_scaled_job, jobs) if e]
+        for e in errs:
+            print("FAILED", e, file=sys.stderr)
+        n_new += len(jobs) - len(errs)
     return n_new
+
+
+def _header_sky(path: str) -> float | None:
+    with fits.open(path, memmap=True, lazy_load_hdus=True) as hdul:
+        for h in hdul:
+            if h.header.get("NAXIS", 0) >= 2 and "SKYVAL" in h.header:
+                return float(h.header["SKYVAL"])
+    return None
 
 
 def run(a) -> int:
@@ -201,7 +229,7 @@ def run(a) -> int:
         npix = (sel["naxis1"].fillna(9576) * sel["naxis2"].fillna(6388))  # v2 single size
         gb = npix.sum() * 4 / 1e9
         print(f"--scaled-copy writes ~{gb:.1f} GB")
-    n = build_tree(sel, out, a.scaled_copy, a.dry_run, a.hhh_scale)
+    n = build_tree(sel, out, a.scaled_copy, a.dry_run, a.sky_sub, a.workers)
     print(("dry run: nothing written to the tree" if a.dry_run
            else f"{n} new entries under {out}/<band>/"))
     return 0
@@ -227,7 +255,7 @@ def demo() -> int:
             index=str(idx), out=str(out), bands=MEDIUM_BANDS, tiles=None,
             exclude_dates="", exclude_images=[str(bad)], require_zp=True,
             max_seeing=0, per_tile_band=3, zp_warn=0.1, scaled_copy=None,
-            dry_run=False, zp_clip=0.3, hhh_scale=None)
+            dry_run=False, zp_clip=0.3, sky_sub=False, workers=1)
         run(a)
         man = pd.read_csv(out / "manifest.csv", dtype=str)
         links = sorted((out).glob("*/*.fits"))
@@ -250,24 +278,28 @@ def demo() -> int:
         idx_df.loc[0, "zp"] = idx_df["zp"].median() + 2.0
         idx2 = Path(tmp) / "idx2.csv"
         idx_df.to_csv(idx2, index=False)
-        a2 = argparse.Namespace(**{**vars(a), "index": str(idx2), "out": str(Path(tmp) / "t2"),
-                                   "hhh_scale": 25.0})
+        a2 = argparse.Namespace(**{**vars(a), "index": str(idx2), "out": str(Path(tmp) / "t2")})
         run(a2)
         m2 = pd.read_csv(Path(tmp) / "t2/manifest.csv", dtype=str)
         checks["ZP outlier dropped"] = (m2["reason"] == "zp_outlier").sum() == 1
-        hhh = sorted((Path(tmp) / "t2").glob("*/*.hhh"))
-        h0 = fits.Header.fromstring(hhh[0].read_text(), sep="\n") if hhh else None
-        sel2 = m2[m2["selected"] == "1"]
-        checks[".hhh beside every link, with WCS + HIPSSCAL"] = (
-            len(hhh) == len(sel2) and h0 is not None and "CTYPE1" in h0
-            and abs(h0["HIPSSCAL"] - 10 ** (0.4 * (h0["ZP_AUTO"] - 25.0))) < 1e-9)
         sc = Path(tmp) / "scaled"
         sel = man[man["selected"] == "1"].head(1).assign(zp=lambda d: d["zp"].astype(float))
         build_tree(sel, sc, 25.0, False)
         r = sel.iloc[0]
         f = next(sc.glob("*/*.fits"))
+        k = 10 ** (0.4 * (25.0 - r["zp"]))
         ratio = np.median(fits.getdata(f)) / np.median(fits.getdata(r["path"]))
-        checks["scaled copy factor"] = abs(ratio - 10 ** (0.4 * (25.0 - r["zp"]))) < 1e-4
+        checks["scaled copy factor"] = abs(ratio - k) < 1e-4
+        sc2 = Path(tmp) / "scaled_sky"
+        build_tree(sel.assign(sky=np.nan), sc2, 25.0, False, sky_sub=True, workers=2)
+        f2 = next(sc2.glob("*/*.fits"))
+        sky = fits.getheader(r["path"])["SKYVAL"]
+        expect = (fits.getdata(r["path"]).astype(np.float32) - sky) * k
+        h2 = fits.getheader(f2)
+        checks["sky-sub copy = (data - SKYVAL) * scale, header kept"] = (
+            np.allclose(fits.getdata(f2), expect, rtol=1e-5, atol=1e-3)
+            and h2["HIPSZP"] == 25.0 and "CTYPE1" in h2
+            and not list(sc2.glob("*/*.part")))
     for k, v in checks.items():
         print(f"  [{'PASS' if v else 'FAIL'}] {k}")
     return 0 if all(checks.values()) else 1
@@ -290,8 +322,9 @@ def main() -> int:
     ap.add_argument("--zp-clip", type=float, default=0.3,
                     help="drop frames with |zp - band median| > this [mag]; 0 = off")
     ap.add_argument("--scaled-copy", type=float, metavar="ZPREF")
-    ap.add_argument("--hhh-scale", type=float, metavar="ZPREF",
-                    help="symlink + <name>.hhh header with HIPSSCAL for Hipsgen expTime=")
+    ap.add_argument("--sky-sub", action="store_true",
+                    help="with --scaled-copy: subtract each frame's SKYVAL first")
+    ap.add_argument("--workers", type=int, default=4, help="parallel scaled copies")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--demo", action="store_true")
     a = ap.parse_args()

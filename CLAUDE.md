@@ -18,7 +18,11 @@ Decisions (maintainer, 2026-11-25):
   the default result has been seen, and record why.
 - Scope = the RIS DP0/DP1/DP2 footprints. **DP0 (7 IMS tiles) first**, as
   the example run.
-- Input frames are used through **symlinks** (no copies).
+- Input frames are used through **symlinks**, **as they are** (maintainer,
+  2026-11-25: no scaled/sky-subtracted copies - CDS's test used the frames
+  unmodified too). ZP and sky differences between frames are left to
+  Thomas's per-band normalisation; `--scaled-copy` stays in the code only
+  as an option to revisit if seams are unacceptable.
 - The finished HiPS will be **linked from gwportal** (maintainer,
   2026-11-25), so the output must end up where gwportal's web server can
   serve it.
@@ -55,10 +59,12 @@ keep that check passing unless the recipe is changed on purpose.
    `not_mounted`. Mapping source: gwportal `api/views.py::_serialize_processed`
    and `survey/models.py::ProcessedScienceFrame` (zp = ZP_AUTO, ul5 = UL5_AUTO).
 2. `hips7dt/select_link.py` - per tile x band best-N selection, exclusions,
-   symlink tree, `manifest.csv`, `zp_report.csv`; `--scaled-copy ZPREF`
-   when ZPs differ (Hipsgen cannot scale individual files).
+   symlink tree, `manifest.csv`, `zp_report.csv`, `zp_by_unit.csv`;
+   `--scaled-copy ZPREF --sky-sub` writes float32 copies at a common ZP with
+   the sky removed (Hipsgen cannot scale individual files).
 3. `hips7dt/run_hipsgen.sh` - one FITS HiPS per band, order 10 (0.40"/pix).
 4. `hips7dt/make_color_hips.py` - colour PNG HiPS (resume by default).
+5. `hips7dt/make_viewer.py` - Aladin Lite comparison page for all HiPS.
 
 ## Open items
 
@@ -70,14 +76,23 @@ keep that check passing unless the recipe is changed on purpose.
       to its serializer if QA flags are needed for selection.
 - [x] Hipsgen parameter names checked against `-h` (v12.903): note
       `skyVal` (capital V), `tileWidth`, `expTime`, `mode`.
-- [ ] Hipsgen follows file symlinks? (first m650 run)
-- [ ] ZP spread. First DP0 selection (N=10, 1,400 frames): per-band ZP std
-      0.03-0.13 mag, but outliers up to 7 mag (m625 22.8-29.9, m675 21.0,
-      m850 28.1, m450/m600 ~25.05 vs ~26.5) -> `--zp-clip 0.3` (default)
-      drops them before ranking. Remaining offsets: try `--hhh-scale ZPREF`
-      (`<name>.hhh` header with HIPSSCAL beside each symlink) + Hipsgen
-      `expTime=HIPSSCAL` (SCALE=1) - no pixel copies. Needs confirming that
-      Hipsgen reads .hhh headers and divides by expTime (`-man expTime`).
+- [x] ZP spread / sky. First DP0 selection (N=10, 1,400 frames): per-band
+      ZP std 0.03-0.13 mag, outliers up to 7 mag -> `--zp-clip 0.3`
+      (default) drops them. Frames are NOT background-subtracted to zero
+      (m650 median 18.6 ~ SKYVAL 17.7 ADU). Hipsgen test on m650, T02524
+      region (2026-11-25): `.hhh` header + `expTime=HIPSSCAL` -> pixels
+      unchanged (ratio 1.00); `skyVal=auto` -> everything x2.25, sky 58 ->
+      138. The .hhh option was removed. Copies
+      (`--scaled-copy 25 --sky-sub`, ~245 MB/frame) were REJECTED by the
+      maintainer: frames are used unmodified (see Decisions).
+- [x] Hipsgen speed: 4 threads ~13 tiles/min (m650 DP0 = 2,611 tiles,
+      ~3.7 h); CPU-bound (no disk reads in steady state). skynet has 48
+      cores, load ~4-5 -> THREADS=16. Test on a region MOC first
+      (`EXTRA="region=<moc.fits>"`, 0.28 deg2 around T02524 took 1-3 min).
+- [x] Hipsgen follows file symlinks (m650 raw run read all 70).
+- Viewing: `hips7dt/make_viewer.py` -> `hips/index.html`, two synced
+  Aladin Lite panels; serve with `python3 -m http.server` on skynet + ssh
+  tunnel. gwportal will link the final HiPS later.
 - [ ] DP0 audit problem images (2025-06/07 m425/m625/m850, 2025-09-04 all
       bands, 2025-10 red bands) were found on coadds; check whether v2
       frames share them. Lists on proton: ris-db-pipeline

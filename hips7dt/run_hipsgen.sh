@@ -12,9 +12,10 @@
 #   in= out= id= order= tileWidth= bitpix= maxThread= skyVal= expTime= mode=
 #
 #   IN=hips_in/dp0_n10 OUT=hips/dp0_n10 BANDS=m650 bash hips7dt/run_hipsgen.sh
-#   SCALE=1  -> expTime=HIPSSCAL: divide each frame by the HIPSSCAL card of its
-#               .hhh header (select_link.py --hhh-scale ZPREF) = common ZP
-#   SKY=auto -> skyVal=auto (per-frame background removal)
+#   ZP / sky: do them in select_link.py (--scaled-copy 25 --sky-sub). Tested
+#   2026-11-25 on m650: Hipsgen expTime= with a .hhh header changed nothing,
+#   skyVal=auto multiplied the pixels by ~2.25 instead of removing the sky.
+#   SKY=<value> passes skyVal= anyway, for experiments.
 #   EXTRA="mode=..."  any further Hipsgen parameters
 set -euo pipefail
 
@@ -30,12 +31,10 @@ THREADS=${THREADS:-4}
 MEM=${MEM:-16g}
 ID_PREFIX=${ID_PREFIX:-SNU/P/7DT/RIS-DP0}
 BANDS=${BANDS:-$(ls "$IN" | grep -E '^m[0-9]{3}$')}
-SCALE=${SCALE:-0}
 SKY=${SKY:-}
 EXTRA=${EXTRA:-}
 
 opts=(order="$ORDER" tileWidth=512 bitpix=-32 maxThread="$THREADS" cache="$WORK/hipsgen_cache")
-[ "$SCALE" = 1 ] && opts+=(expTime=HIPSSCAL)
 [ -n "$SKY" ] && opts+=(skyVal="$SKY")
 # shellcheck disable=SC2206
 [ -n "$EXTRA" ] && opts+=($EXTRA)
