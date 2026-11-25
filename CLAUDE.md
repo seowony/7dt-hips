@@ -87,7 +87,8 @@ keep that check passing unless the recipe is changed on purpose.
       maintainer: frames are used unmodified (see Decisions).
 - [x] Hipsgen speed: 4 threads ~13 tiles/min (m650 DP0 = 2,611 tiles,
       ~3.7 h); CPU-bound (no disk reads in steady state). skynet has 48
-      cores, load ~4-5 -> THREADS=16. Test on a region MOC first
+      cores, load ~4-5. **Use at most 8 cores** (maintainer, 2026-11-25):
+      THREADS=8 default, colour `--workers 8`; ~1.7 h per DP0 band, ~35 h for 20. Test on a region MOC first
       (`EXTRA="region=<moc.fits>"`, 0.28 deg2 around T02524 took 1-3 min).
 - [x] Hipsgen follows file symlinks (m650 raw run read all 70).
 - [x] First colour quick look (DP0 region around T02524, N=10, 20 bands,

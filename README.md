@@ -57,8 +57,8 @@ python3 hips7dt/select_link.py --index index/dp0_frames.csv --out hips_in/dp0_n1
 
 # 3) Hipsgen. Quick look first: all 20 bands on a small region MOC
 #    (EXTRA="region=<moc.fits>", a few minutes per band), colour it, inspect;
-#    then the full DP0 area (~1 h per band at THREADS=16)
-THREADS=16 IN=hips_in/dp0_n10 OUT=hips/dp0_n10 bash hips7dt/run_hipsgen.sh
+#    then the full DP0 area (~1.7 h per band at THREADS=8)
+THREADS=8 IN=hips_in/dp0_n10 OUT=hips/dp0_n10 bash hips7dt/run_hipsgen.sh
 
 # 4) colour composite
 python3 hips7dt/make_color_hips.py --in-root hips/dp0_n10 --out hips/dp0_n10/color \
