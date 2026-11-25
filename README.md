@@ -61,7 +61,8 @@ python3 hips7dt/select_link.py --index index/dp0_frames.csv --out hips_in/dp0_n1
 THREADS=16 IN=hips_in/dp0_n10 OUT=hips/dp0_n10 bash hips7dt/run_hipsgen.sh
 
 # 4) colour composite
-python3 hips7dt/make_color_hips.py --in-root hips/dp0_n10 --out hips/dp0_n10/color --workers 4
+python3 hips7dt/make_color_hips.py --in-root hips/dp0_n10 --out hips/dp0_n10/color \
+    --workers 8 --norm sky      # v2 singles keep their sky; see CLAUDE.md
 ```
 
 To inspect: `python3 hips7dt/make_viewer.py` writes `hips/index.html`, two

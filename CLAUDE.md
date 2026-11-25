@@ -90,6 +90,18 @@ keep that check passing unless the recipe is changed on purpose.
       cores, load ~4-5 -> THREADS=16. Test on a region MOC first
       (`EXTRA="region=<moc.fits>"`, 0.28 deg2 around T02524 took 1-3 min).
 - [x] Hipsgen follows file symlinks (m650 raw run read all 70).
+- [x] First colour quick look (DP0 region around T02524, N=10, 20 bands,
+      2026-11-25): Thomas's default gave a flat pink field. Cause: v2 singles
+      keep their sky, so Hipsgen's `hips_pixel_cut` is only sky +- noise
+      (e.g. m450 105-113) and his `high` = the sky -> everything saturates.
+      Fix in the colour step only (frames untouched): `--norm sky` subtracts
+      each band's median sky (measured on the deepest-order tiles) and uses
+      high = K * noise sigma (`--sky-high-sigma`, default 20; demo: K 8 ->
+      grey background, 20 -> dark with visible noise, 50 -> black). The
+      rest of Thomas's recipe is unchanged; `--norm thomas` (default)
+      still reproduces his script pixel for pixel.
+- [ ] Sky differences between frames/nights inside a band are not removed
+      by a per-band constant - check for seams in the colour HiPS.
 - Viewing: `hips7dt/make_viewer.py` -> `hips/index.html`, two synced
   Aladin Lite panels; serve with `python3 -m http.server` on skynet + ssh
   tunnel. gwportal will link the final HiPS later.

@@ -78,6 +78,8 @@ def find_hips(root: Path) -> list[str]:
     out = []
     for prop in sorted(root.rglob("properties")):
         d = prop.parent
+        if d.name == "HpxFinder":   # Hipsgen's index, not an image HiPS
+            continue
         if (d / "Norder3").exists() or any(d.glob("Norder*")):
             out.append(d.relative_to(root).as_posix())
     return out
@@ -99,6 +101,8 @@ def demo() -> int:
             (root / name / "Norder3").mkdir(parents=True)
             (root / name / "properties").write_text("hips_order = 10\n")
         (root / "not_hips").mkdir()
+        (root / "test_raw/m650/HpxFinder/Norder3").mkdir(parents=True)
+        (root / "test_raw/m650/HpxFinder/properties").write_text("x = 1\n")
         page = write_page(root, "79.151 -60.287", 0.5)
         text = page.read_text()
         checks = {
