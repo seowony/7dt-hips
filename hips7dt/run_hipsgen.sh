@@ -15,7 +15,10 @@
 #   ZP / sky: do them in select_link.py (--scaled-copy 25 --sky-sub). Tested
 #   2026-11-25 on m650: Hipsgen expTime= with a .hhh header changed nothing,
 #   skyVal=auto multiplied the pixels by ~2.25 instead of removing the sky.
-#   SKY=<value> passes skyVal= anyway, for experiments.
+#   SKY (default SKYVAL) -> skyVal=SKYVAL: Hipsgen subtracts each frame's own
+#   header SKYVAL while coadding (files untouched). Tested 2026-11-25, m650
+#   T02524 region: sky 58 -> 1.4 ADU, star excess unchanged. SKY= (empty)
+#   switches it off.
 #   EXTRA="mode=..."  any further Hipsgen parameters
 set -euo pipefail
 
@@ -27,11 +30,11 @@ case "$IN" in /*) ;; *) IN="$WORK/$IN" ;; esac
 case "$OUT" in /*) ;; *) OUT="$WORK/$OUT" ;; esac
 LOGS=${LOGS:-$WORK/logs}
 ORDER=${ORDER:-10}                 # 512-px tiles at order 10 -> 0.40"/pix (7DT 0.505")
-THREADS=${THREADS:-4}
+THREADS=${THREADS:-16}              # skynet: 48 cores, tested at 16
 MEM=${MEM:-16g}
 ID_PREFIX=${ID_PREFIX:-SNU/P/7DT/RIS-DP0}
 BANDS=${BANDS:-$(ls "$IN" | grep -E '^m[0-9]{3}$')}
-SKY=${SKY:-}
+SKY=${SKY-SKYVAL}
 EXTRA=${EXTRA:-}
 
 opts=(order="$ORDER" tileWidth=512 bitpix=-32 maxThread="$THREADS" cache="$WORK/hipsgen_cache")
