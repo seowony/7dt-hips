@@ -48,29 +48,27 @@ python3 hips7dt/frame_query.py --tiles config/dp0_tiles.txt \
     --out index/dp0_frames.csv --check-exists
 #    prints frames per tile x band and how many sit on /balmer (not on skynet)
 
-# 2) selection: best N frames by seeing per tile x band; ZP outliers
-#    (|zp - band median| > 0.3 mag) dropped. --hhh-scale writes a .hhh header
-#    with HIPSSCAL beside each symlink (common ZP, no pixel copies).
-for N in 10 30; do
-  python3 hips7dt/select_link.py --index index/dp0_frames.csv --out hips_in/dp0_n$N \
-      --tiles config/dp0_tiles.txt --exclude-dates 2025-09-04 \
-      --per-tile-band $N --require-zp --hhh-scale 25
-done
+# 2) selection: best N frames by seeing per tile x band, ZP outliers dropped.
+#    Hipsgen cannot rescale single files, so write float32 copies brought to a
+#    common ZP (25) with each frame's SKYVAL subtracted (~245 MB per frame).
+python3 hips7dt/select_link.py --index index/dp0_frames.csv --out hips_in/dp0_n10_zp \
+    --tiles config/dp0_tiles.txt --exclude-dates 2025-09-04 --per-tile-band 10 \
+    --require-zp --scaled-copy 25 --sky-sub --workers 8
 
-# 3) Hipsgen on m650: N=10 without/with the ZP scale, and N=30 with it
-BANDS=m650 IN=hips_in/dp0_n10 OUT=hips/dp0_n10_raw bash hips7dt/run_hipsgen.sh
-BANDS=m650 IN=hips_in/dp0_n10 OUT=hips/dp0_n10 SCALE=1 bash hips7dt/run_hipsgen.sh
-BANDS=m650 IN=hips_in/dp0_n30 OUT=hips/dp0_n30 SCALE=1 bash hips7dt/run_hipsgen.sh
-cat hips/dp0_n*/timing.tsv
-#    then all bands for the chosen variant (drop BANDS=)
+# 3) Hipsgen. Test on a small region first (EXTRA="region=<moc.fits>"),
+#    then all bands; THREADS up to what the machine allows
+THREADS=16 IN=hips_in/dp0_n10_zp OUT=hips/dp0_n10_zp bash hips7dt/run_hipsgen.sh
 
 # 4) colour composite
 python3 hips7dt/make_color_hips.py --in-root hips/dp0_n10 --out hips/dp0_n10/color --workers 4
 ```
 
-To inspect: open the `hips/dp0/color` folder in Aladin Desktop, or serve
-`hips/dp0` locally (`python3 -m http.server -d hips/dp0`) and point
-Aladin Lite at it.
+To inspect: `python3 hips7dt/make_viewer.py` writes `hips/index.html`, two
+linked Aladin Lite panels with a drop-down of every HiPS under `hips/`.
+Serve it on skynet (`cd /data8/skyteam/7DT/hips && python3 -m http.server
+8090 --bind 127.0.0.1`), tunnel from the laptop (`ssh -N -L
+8090:127.0.0.1:8090 skyteam@skynet`) and open http://localhost:8090/.
+Aladin Desktop can open the same URLs (File > Open > URL).
 
 ## v2 single frames (from gwportal)
 
@@ -94,8 +92,9 @@ Aladin Lite at it.
   symlinks (number of files read in the log).
 - **ZP spread**: Hipsgen cannot scale individual files. If a band's
   `zp_range` in `zp_report.csv` exceeds ~0.1 mag (unit-to-unit
-  sensitivity), the mosaic will show seams. Then try `--scaled-copy 25`
-  (float32 copies scaled to a common ZP; the disk cost is printed first).
+  sensitivity), the mosaic will show seams, so use `--scaled-copy 25
+  --sky-sub` (float32 copies; the disk cost is printed first). Hipsgen's own
+  `expTime=` (with a .hhh header) and `skyVal=auto` did not do this (tested).
   Also check in the header whether the ZP includes the exposure time.
 - **DP0 has many dates** (140–170 per tile). Do not use all of them;
   cut with `--per-tile-band`. 10 frames × 7 tiles × 20 bands ≈ 1,400 frames.
