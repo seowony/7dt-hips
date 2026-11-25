@@ -214,7 +214,8 @@ def demo() -> int:
         sa = argparse.Namespace(index=str(out), out=str(Path(tmp) / "tree"), bands=MEDIUM_BANDS,
                                 tiles=None, exclude_dates="", exclude_images=[],
                                 require_zp=True, max_seeing=0, per_tile_band=10,
-                                zp_warn=0.1, scaled_copy=None, dry_run=True)
+                                zp_warn=0.1, scaled_copy=None, dry_run=True,
+                                zp_clip=0.3, hhh_scale=None)
         sl.run(sa)
         man = pd.read_csv(Path(tmp) / "tree/manifest.csv", dtype=str)
         checks["select_link reads it (12 selected)"] = (man["selected"] == "1").sum() == 12

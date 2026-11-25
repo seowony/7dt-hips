@@ -40,18 +40,24 @@ python3 hips7dt/frame_query.py --tiles config/dp0_tiles.txt \
     --out index/dp0_frames.csv --check-exists
 #    prints frames per tile x band and how many sit on /balmer (not on skynet)
 
-# 2) selection (best 10 frames by seeing per tile x band) - dry run first
-python3 hips7dt/select_link.py --index index/dp0_frames.csv --out hips_in/dp0 \
-    --tiles config/dp0_tiles.txt --exclude-dates 2025-09-04 \
-    --per-tile-band 10 --require-zp --dry-run
-#    if the numbers look right, rerun without --dry-run
+# 2) selection: best N frames by seeing per tile x band; ZP outliers
+#    (|zp - band median| > 0.3 mag) dropped. --hhh-scale writes a .hhh header
+#    with HIPSSCAL beside each symlink (common ZP, no pixel copies).
+for N in 10 30; do
+  python3 hips7dt/select_link.py --index index/dp0_frames.csv --out hips_in/dp0_n$N \
+      --tiles config/dp0_tiles.txt --exclude-dates 2025-09-04 \
+      --per-tile-band $N --require-zp --hhh-scale 25
+done
 
-# 3) Hipsgen on one band first, then all bands
-BANDS=m650 IN=hips_in/dp0 OUT=hips/dp0 bash hips7dt/run_hipsgen.sh
-IN=hips_in/dp0 OUT=hips/dp0 bash hips7dt/run_hipsgen.sh
+# 3) Hipsgen on m650: N=10 without/with the ZP scale, and N=30 with it
+BANDS=m650 IN=hips_in/dp0_n10 OUT=hips/dp0_n10_raw bash hips7dt/run_hipsgen.sh
+BANDS=m650 IN=hips_in/dp0_n10 OUT=hips/dp0_n10 SCALE=1 bash hips7dt/run_hipsgen.sh
+BANDS=m650 IN=hips_in/dp0_n30 OUT=hips/dp0_n30 SCALE=1 bash hips7dt/run_hipsgen.sh
+cat hips/dp0_n*/timing.tsv
+#    then all bands for the chosen variant (drop BANDS=)
 
 # 4) colour composite
-python3 hips7dt/make_color_hips.py --in-root hips/dp0 --out hips/dp0/color --workers 4
+python3 hips7dt/make_color_hips.py --in-root hips/dp0_n10 --out hips/dp0_n10/color --workers 4
 ```
 
 To inspect: open the `hips/dp0/color` folder in Aladin Desktop, or serve

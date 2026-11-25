@@ -19,6 +19,13 @@ Decisions (maintainer, 2026-11-25):
 - Scope = the RIS DP0/DP1/DP2 footprints. **DP0 (7 IMS tiles) first**, as
   the example run.
 - Input frames are used through **symlinks** (no copies).
+- The finished HiPS will be **linked from gwportal** (maintainer,
+  2026-11-25), so the output must end up where gwportal's web server can
+  serve it.
+- DP0 uses the **best N frames per tile x band** (by seeing), not all of
+  them (~600 per tile-band exist): output size does not depend on N, but
+  Hipsgen time does, and DP0 should not be ~3 mag deeper than DP1/DP2.
+  N = 10 vs 30 is compared on m650 first.
 - Runs on **skynet**: `/lyman/data1`, `/lyman/data2` are mounted there;
   `/balmer` is NOT. Frames that live only on balmer are invisible from
   skynet - check per tile x band counts in the index.
@@ -55,10 +62,16 @@ keep that check passing unless the recipe is changed on purpose.
 - [ ] Does Hipsgen read the TPV WCS of v2 singles correctly?
 - [ ] gwportal's API does not return `is_production` / `sanity_flag`; add them
       to its serializer if QA flags are needed for selection.
-- [ ] Hipsgen parameter names not yet checked against `Hipsgen.jar -h`
-      (`in= out= id= order= bitpix= maxThread= skyval=auto`), and whether it
-      follows file symlinks.
-- [ ] ZP spread per band (`zp_report.csv`) -> symlinks or scaled copies.
+- [x] Hipsgen parameter names checked against `-h` (v12.903): note
+      `skyVal` (capital V), `tileWidth`, `expTime`, `mode`.
+- [ ] Hipsgen follows file symlinks? (first m650 run)
+- [ ] ZP spread. First DP0 selection (N=10, 1,400 frames): per-band ZP std
+      0.03-0.13 mag, but outliers up to 7 mag (m625 22.8-29.9, m675 21.0,
+      m850 28.1, m450/m600 ~25.05 vs ~26.5) -> `--zp-clip 0.3` (default)
+      drops them before ranking. Remaining offsets: try `--hhh-scale ZPREF`
+      (`<name>.hhh` header with HIPSSCAL beside each symlink) + Hipsgen
+      `expTime=HIPSSCAL` (SCALE=1) - no pixel copies. Needs confirming that
+      Hipsgen reads .hhh headers and divides by expTime (`-man expTime`).
 - [ ] DP0 audit problem images (2025-06/07 m425/m625/m850, 2025-09-04 all
       bands, 2025-10 red bands) were found on coadds; check whether v2
       frames share them. Lists on proton: ris-db-pipeline
