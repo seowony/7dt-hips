@@ -5,7 +5,8 @@
 #   $OUT/m400/{properties,Moc.fits,Norder*/...}, $OUT/m425/..., ...
 #
 # Bands run one after another; Hipsgen itself uses $THREADS threads.
-# A band is skipped when its properties file holds hips_check_code (resume). Wall time, Hipsgen exit code and completeness per band go to
+# Resume: a finished band is skipped, one with FITS tiles only is finished
+# with PNG CHECKCODE PACKINDEX (see tiles_done/band_done below). Wall time, Hipsgen exit code and completeness per band go to
 # $OUT/timing.tsv; a non-zero exit code does not stop the other bands.
 #
 # Parameter names checked against `Hipsgen.jar -h` (Aladin v12.903):
@@ -42,11 +43,20 @@ opts=(order="$ORDER" tileWidth=512 bitpix=-32 maxThread="$THREADS" cache="$WORK/
 # shellcheck disable=SC2206
 [ -n "$EXTRA" ] && opts+=($EXTRA)
 
-# A band is complete when Hipsgen's last default action (CHECKCODE) has
-# written its check codes into the properties file. (Norder3/Allsky.fits is
-# NOT a usable marker: Hipsgen does not write it for small sky areas, so a
-# finished band was being rebuilt on restart.)
-band_done() { [ -f "$1/properties" ] && grep -q "^hips_check_code" "$1/properties"; }
+# Two stages per band, judged from the properties file (Hipsgen's exit code
+# is not reliable: it returned 0 after "ABORT : PNG abort"):
+#   tiles_done - TILES finished: hips_pixel_cut is written. The FITS tiles
+#                are all make_color_hips.py needs.
+#   band_done  - CHECKCODE, the last default action, wrote hips_check_code.
+# A band with tiles but no check code only gets the remaining actions
+# (PNG CHECKCODE PACKINDEX, minutes), not a full rebuild.
+tiles_done() { [ -f "$1/properties" ] && grep -q "^hips_pixel_cut" "$1/properties"; }
+band_done()  { [ -f "$1/properties" ] && grep -q "^hips_check_code" "$1/properties"; }
+
+# The PNG step needs java.awt; under nohup / after logout there is no X
+# display and it aborted ("PNG abort" in the m425..m625 logs). Headless fixes it.
+unset DISPLAY
+JAVA_OPTS=(-Djava.awt.headless=true -Xmx"$MEM")
 
 mkdir -p "$OUT" "$LOGS"
 echo "IN=$IN  OUT=$OUT  LOGS=$LOGS"
@@ -55,20 +65,25 @@ for band in $BANDS; do
   if band_done "$OUT/$band"; then
     echo "done already: $band"; continue
   fi
+  actions=()
+  if tiles_done "$OUT/$band"; then
+    actions=(PNG CHECKCODE PACKINDEX)   # FITS tiles exist: finish only
+  fi
   n=$(find -L "$IN/$band" -name '*.fits' | wc -l)
-  echo "=== $band: $n frames  ${opts[*]}  $(date)"
+  echo "=== $band: $n frames  ${opts[*]} ${actions[*]}  $(date)"
   t0=$(date +%s)
   # Hipsgen can exit non-zero after a complete run (e.g. warnings); with
   # `set -e -o pipefail` that used to stop the whole loop after the first
   # band. Record the exit code instead and judge completion by the files.
   set +e
-  java -Xmx"$MEM" -jar "$HIPSGEN" \
-      in="$IN/$band" out="$OUT/$band" id="$ID_PREFIX/$band" "${opts[@]}" \
+  java "${JAVA_OPTS[@]}" -jar "$HIPSGEN" \
+      in="$IN/$band" out="$OUT/$band" id="$ID_PREFIX/$band" "${opts[@]}" "${actions[@]}" \
       2>&1 | tee "$LOGS/hipsgen_$(basename "$OUT")_$band.log"
   rc=${PIPESTATUS[0]}
   set -e
   done_ok=no
   band_done "$OUT/$band" && done_ok=yes
+  tiles_done "$OUT/$band" && [ "$done_ok" = no ] && done_ok=tiles_only
   printf '%s\t%s\t%d\trc=%s\tcomplete=%s\t%s\n' "$band" "$n" "$(( $(date +%s) - t0 ))" \
       "$rc" "$done_ok" "${opts[*]}" >> "$OUT/timing.tsv"
   echo "=== $band finished: rc=$rc complete=$done_ok"
