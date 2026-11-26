@@ -91,6 +91,13 @@ keep that check passing unless the recipe is changed on purpose.
       THREADS=8 default, colour `--workers 8`; ~1.7 h per DP0 band, ~35 h for 20. Test on a region MOC first
       (`EXTRA="region=<moc.fits>"`, 0.28 deg2 around T02524 took 1-3 min).
 - [x] Hipsgen follows file symlinks (m650 raw run read all 70).
+- [x] DP0 full run (2026-11-25/26): bands under nohup finished TILES (FITS
+      tiles + hips_pixel_cut OK) but "ABORT : PNG abort" - java.awt had no
+      X display after logout - so no PNG previews and no hips_check_code,
+      while Hipsgen still exited 0. Fix: java -Djava.awt.headless=true and
+      DISPLAY unset; resume = skip bands with hips_check_code, run only
+      PNG CHECKCODE PACKINDEX for bands with hips_pixel_cut. Exit codes are
+      not trusted. ~1.1-1.7 h per band at 8 threads (m500 2.9 h).
 - [x] First colour quick look (DP0 region around T02524, N=10, 20 bands,
       2026-11-25): Thomas's default gave a flat pink field. Cause: v2 singles
       keep their sky, so Hipsgen's `hips_pixel_cut` is only sky +- noise
