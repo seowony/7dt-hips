@@ -16,6 +16,14 @@ halpha, ~80 GB), `region_n10` and `test_*` (deletable). If it resumes, the
 ideas on the table are deeper inputs (more frames or outlier-rejected v2
 coadds) and order 9; see Open items.
 
+Exception (maintainer, 2026-11-27): keep `dp0_n10`, and try a DEEP DP0
+image - DP0 has ~400-900 frames per tile x band, so far more than 10 can be
+coadded, with the summed exposure time matched across bands as far as
+possible (`select_link.py --target-exptime S`, which reports the largest S
+every tile x band can reach). Hipsgen time grows ~linearly with frames
+(N=10: ~1.3 h per band for all 7 tiles at 8 cores), so test one tile /
+region first.
+
 ## What this is
 
 Colour HiPS of 7DT medium-band data. Per-band FITS HiPS are built with
@@ -70,7 +78,9 @@ keep that check passing unless the recipe is changed on purpose.
    header-scan fallback). Frames not under `/lyman` are flagged
    `not_mounted`. Mapping source: gwportal `api/views.py::_serialize_processed`
    and `survey/models.py::ProcessedScienceFrame` (zp = ZP_AUTO, ul5 = UL5_AUTO).
-2. `hips7dt/select_link.py` - per tile x band best-N selection, exclusions,
+2. `hips7dt/select_link.py` - per tile x band best-N selection (or
+   `--target-exptime`: best-seeing frames up to a summed exposure, for
+   matched depth; `exptime_report.csv`), exclusions,
    symlink tree, `manifest.csv`, `zp_report.csv`, `zp_by_unit.csv`;
    `--scaled-copy ZPREF --sky-sub` writes float32 copies at a common ZP with
    the sky removed (Hipsgen cannot scale individual files).
