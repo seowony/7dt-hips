@@ -65,6 +65,12 @@ keep that check passing unless the recipe is changed on purpose.
 3. `hips7dt/run_hipsgen.sh` - one FITS HiPS per band, order 10 (0.40"/pix).
 4. `hips7dt/make_color_hips.py` - colour PNG HiPS (resume by default).
 5. `hips7dt/make_viewer.py` - Aladin Lite comparison page for all HiPS.
+6. `hips7dt/make_line_hips.py` - emission-line map from three band HiPS
+   (default H-alpha: m650 minus the scaled mean of m625, m675; continuum
+   scales measured on bright pixels, no ZP needed). Grey = continuum, red
+   = excess, blue = deficit above `--thr` sigma. Reuses the FITS HiPS, no
+   Hipsgen. PSF differences between bands leave ring residuals on bright
+   stars; single-band artefacts show at full strength (red/blue).
 
 ## Open items
 
@@ -120,6 +126,17 @@ keep that check passing unless the recipe is changed on purpose.
       overlay (modes: overlayMean, overlayMeanMax, overlayAdd, overlayNone,
       overlayFading; treeMedian is only for the hierarchy). Option: find
       the frame via HpxFinder and drop it with --exclude-images.
+- [x] DP0 full colour HiPS (2026-11-27): 77 GB (20 FITS bands 3.6-4.2 GB
+      each, 72% of it order 10; colour PNG 1.8 GB). Colour: `--norm sky`
+      K=20 preferred by the maintainer over Thomas-as-is (which, with
+      skyVal=SKYVAL input, gives a clean black sky but pink/purple stars
+      and loses faint sources). Compared with LS DR10 in Aladin Lite: as a
+      broad RGB picture 7DT cannot compete (depth, seeing); satellite
+      trails and blue-band cosmic-ray specks remain. Maintainer's question:
+      is a RIS HiPS useful at all? -> test the medium-band-specific product
+      first: H-alpha line map on DP0 (`make_line_hips.py`). Full-RIS RGB is
+      ON HOLD until that is judged; if it goes ahead, reconsider coadd
+      inputs (outlier-rejected?) and order 9.
 - Viewing: `hips7dt/make_viewer.py` -> `hips/index.html`, two synced
   Aladin Lite panels; serve with `python3 -m http.server` on skynet + ssh
   tunnel. gwportal will link the final HiPS later.
