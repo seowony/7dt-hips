@@ -23,6 +23,12 @@ possible (`select_link.py --target-exptime S`, which reports the largest S
 every tile x band can reach). Hipsgen time grows ~linearly with frames
 (N=10: ~1.3 h per band for all 7 tiles at 8 cores), so test one tile /
 region first.
+  Deep-DP0 decision (2026-11-27): T02524 only, 100-s frames, seeing <= 3.0"
+  (`--max-seeing 3.0`; stricter cuts leave too few frames: 2.0" -> 100 s,
+  2.5" -> 2,200 s matched), `--target-exptime 6000` = 60 frames per band
+  (~+1.0 mag vs N=10). 20,000 s (+1.6 mag, ~3 days) was declined as too
+  costly. Run with nice -n 19 / ionice -c3 (shared skynet, /lyman NFS).
+  Outputs: hips_in/dp0_deep6000, hips/dp0_deep6000/{m*,color,halpha}.
 
 ## What this is
 
