@@ -95,6 +95,15 @@ def select(df: pd.DataFrame, a) -> pd.DataFrame:
     ok = ok.sort_values(["tile", "band", "_s", "_d", "path"])
     ok["rank"] = ok.groupby(["tile", "band"]).cumcount() + 1
     df["rank"] = ok["rank"]
+    # exposure available per tile x band after the quality cuts (before best-N)
+    df["avail_exptime"] = ok.groupby(["tile", "band"])["exptime"].transform("sum")
+    target = getattr(a, "target_exptime", 0) or 0
+    if target > 0:
+        # Best-seeing frames until the summed exposure reaches the target, so
+        # every band (and tile) gets about the same total exposure. The frame
+        # that crosses the target is kept.
+        before = ok.groupby(["tile", "band"])["exptime"].cumsum() - ok["exptime"]
+        df.loc[ok.index[before >= target], "reason"] = "target_exptime_reached"
     if a.per_tile_band > 0:
         drop(df["rank"].fillna(1e9) > a.per_tile_band, "not_in_best_n")
     df["selected"] = (df["reason"] == "").astype(int)
@@ -116,6 +125,18 @@ def zp_report(sel: pd.DataFrame) -> pd.DataFrame:
     })
     rep["zp_range"] = rep["zp_max"] - rep["zp_min"]
     return rep.reset_index()
+
+
+def exptime_report(df: pd.DataFrame) -> pd.DataFrame:
+    """Per tile x band: frames and summed exposure available after the
+    quality cuts, and selected."""
+    cand = df[df["avail_exptime"].notna()]
+    g = cand.groupby(["tile", "band"])
+    out = pd.DataFrame({"n_avail": g.size(), "avail_exptime": g["avail_exptime"].first()})
+    sel = df[df["selected"] == 1].groupby(["tile", "band"])
+    out["n_sel"] = sel.size()
+    out["sel_exptime"] = sel["exptime"].sum()
+    return out.fillna(0).reset_index()
 
 
 def zp_by_unit(sel: pd.DataFrame) -> pd.DataFrame:
@@ -214,6 +235,16 @@ def run(a) -> int:
     rep = zp_report(sel)
     rep.to_csv(out / "zp_report.csv", index=False)
     zp_by_unit(sel).to_csv(out / "zp_by_unit.csv", index=False)
+    exp = exptime_report(df)
+    exp.to_csv(out / "exptime_report.csv", index=False)
+    per_band = exp.groupby("band").agg(sel_min=("sel_exptime", "min"),
+                                       sel_max=("sel_exptime", "max"),
+                                       avail_min=("avail_exptime", "min"))
+    print("summed exposure per tile x band [s]: selected min/max, available min")
+    print(per_band.round(0).astype(int).to_string())
+    lim = exp["avail_exptime"].min()
+    print(f"largest exposure every tile x band can reach: {lim:.0f} s "
+          f"(use --target-exptime <= this for a matched depth)")
 
     print("dropped:", df.loc[df["selected"] == 0, "reason"].value_counts().to_dict())
     print(f"selected {len(sel)} frames, "
@@ -282,6 +313,15 @@ def demo() -> int:
         run(a2)
         m2 = pd.read_csv(Path(tmp) / "t2/manifest.csv", dtype=str)
         checks["ZP outlier dropped"] = (m2["reason"] == "zp_outlier").sum() == 1
+        # exposure-matched selection: 3 nights x 2 units x 100 s per tile-band
+        a3 = argparse.Namespace(**{**vars(a), "out": str(Path(tmp) / "t3"),
+                                   "per_tile_band": 0, "target_exptime": 250.0,
+                                   "exclude_images": []})
+        run(a3)
+        e3 = pd.read_csv(Path(tmp) / "t3/exptime_report.csv")
+        checks["--target-exptime 250: 3 x 100 s per tile-band"] = (
+            (e3["n_sel"] == 3).all() and (e3["sel_exptime"] == 300).all()
+            and (e3["avail_exptime"] == 600).all())
         sc = Path(tmp) / "scaled"
         sel = man[man["selected"] == "1"].head(1).assign(zp=lambda d: d["zp"].astype(float))
         build_tree(sel, sc, 25.0, False)
@@ -317,7 +357,11 @@ def main() -> int:
                     help="comma list of CSVs with tile,obs_date,band")
     ap.add_argument("--require-zp", action="store_true")
     ap.add_argument("--max-seeing", type=float, default=0.0, help="arcsec, 0 = off")
-    ap.add_argument("--per-tile-band", type=int, default=10)
+    ap.add_argument("--per-tile-band", type=int, default=10,
+                    help="max frames per tile x band (0 = no limit)")
+    ap.add_argument("--target-exptime", type=float, default=0,
+                    help="summed exposure per tile x band [s]: best-seeing frames "
+                         "until this is reached (matched depth); 0 = off")
     ap.add_argument("--zp-warn", type=float, default=0.1)
     ap.add_argument("--zp-clip", type=float, default=0.3,
                     help="drop frames with |zp - band median| > this [mag]; 0 = off")
