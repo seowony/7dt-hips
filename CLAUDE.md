@@ -4,6 +4,18 @@ Working notes for Claude Code sessions on this repository. Code and repo
 documents are English; discussion with the maintainer is Korean, replies
 concise.
 
+## STATUS: PAUSED (maintainer, 2026-11-27)
+
+Work is stopped after the DP0 test. Do not start DP1/DP2 or new products
+unless the maintainer asks. Why: the data are too shallow for the HiPS to be
+useful - the broad RGB cannot compete with LS DR10, and the H-alpha line map
+on DP0 (`make_line_hips.py`, N=10 frames per tile x band) came out dark with
+almost nothing but star residuals. What exists on skynet under
+`/data8/skyteam/7DT/hips/`: `dp0_n10` (20 FITS band HiPS + colour variants +
+halpha, ~80 GB), `region_n10` and `test_*` (deletable). If it resumes, the
+ideas on the table are deeper inputs (more frames or outlier-rejected v2
+coadds) and order 9; see Open items.
+
 ## What this is
 
 Colour HiPS of 7DT medium-band data. Per-band FITS HiPS are built with
