@@ -72,6 +72,18 @@ Serve it on skynet (`cd /data8/skyteam/7DT/hips && python3 -m http.server
 8090:127.0.0.1:8090 skyteam@skynet`) and open http://localhost:8090/.
 Aladin Desktop can open the same URLs (File > Open > URL).
 
+## Emission-line map (H-alpha)
+
+```bash
+python3 hips7dt/make_line_hips.py --in-root hips/dp0_n10 --out hips/dp0_n10/halpha --workers 8
+```
+
+Uses the existing FITS HiPS of m650 (line) and m625, m675 (continuum):
+grey continuum image, red where m650 exceeds the scaled continuum, blue
+where it is fainter. `--line m500 --cont m475,m525` gives [OIII]. See the
+script's docstring for how to tell a real emitter from PSF rings and
+single-band artefacts.
+
 ## v2 single frames (from gwportal)
 
 - Path: `/lyman/data2/processed/{date}/{tile}/{filter}/singles/
